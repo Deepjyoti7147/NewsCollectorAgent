@@ -23,14 +23,19 @@ jobs:
 
       # ── 2. Write .env from secrets then deploy ────────────────────────────
       - name: Write .env to VM
+        env:
+          S_USER: ${{ secrets.SERVER_USER || secrets.USERNAME }}
+          S_IP: ${{ secrets.SERVER_IP }}
         run: |
+          # Construct destination: user@ip or just ip if user is empty
+          DEST="$S_IP"
+          if [ -n "$S_USER" ]; then DEST="${S_USER}@${S_IP}"; fi
+          
           ssh -i ~/.ssh/id_rsa \
               -o StrictHostKeyChecking=no \
               -o ConnectTimeout=30 \
-              "${{ secrets.SERVER_USER }}@${{ secrets.SERVER_IP }}" \
-              "sudo mkdir -p /opt/news-collector && \
-               sudo chown \$USER:\$USER /opt/news-collector && \
-               cat > /opt/news-collector/.env" << 'EOF'
+              "$DEST" \
+              "sudo mkdir -p /opt/news-collector && sudo chown \$USER:\$USER /opt/news-collector && cat > /opt/news-collector/.env" << 'EOF'
           POSTGRES_HOST=${{ secrets.POSTGRES_HOST }}
           POSTGRES_PORT=5432
           POSTGRES_DB=${{ secrets.POSTGRES_DB }}
@@ -46,11 +51,17 @@ jobs:
 
       # ── 3. Deploy on VM ───────────────────────────────────────────────────
       - name: Deploy on VM
+        env:
+          S_USER: ${{ secrets.SERVER_USER || secrets.USERNAME }}
+          S_IP: ${{ secrets.SERVER_IP }}
         run: |
+          DEST="$S_IP"
+          if [ -n "$S_USER" ]; then DEST="${S_USER}@${S_IP}"; fi
+
           ssh -i ~/.ssh/id_rsa \
               -o StrictHostKeyChecking=no \
               -o ConnectTimeout=30 \
-              "${{ secrets.SERVER_USER }}@${{ secrets.SERVER_IP }}" \
+              "$DEST" \
               'bash -s' << 'ENDSSH'
 
             set -euo pipefail
@@ -81,21 +92,21 @@ jobs:
             # ── Rebuild Docker image and restart ──────────────────────────
             echo "[3/4] Building Docker image"
             cd "$APP_DIR"
-            docker compose build --no-cache
+            sudo docker compose build --no-cache
 
             echo "[4/4] Restarting service"
-            docker compose down --remove-orphans || true
-            docker compose up -d
+            sudo docker compose down --remove-orphans || true
+            sudo docker compose up -d
 
             # ── Health check ──────────────────────────────────────────────
             echo "Waiting 10s for container to start..."
             sleep 10
-            if docker compose ps | grep -q "Up"; then
+            if sudo docker compose ps | grep -q "Up"; then
               echo "✅ Container is running"
-              docker compose logs --tail=30
+              sudo docker compose logs --tail=30
             else
               echo "❌ Container failed to start — last logs:"
-              docker compose logs --tail=50
+              sudo docker compose logs --tail=50
               exit 1
             fi
 
