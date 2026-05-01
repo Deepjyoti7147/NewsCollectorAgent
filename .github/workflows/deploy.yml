@@ -1,0 +1,88 @@
+name: Deploy to VM
+
+on:
+  push:
+    branches:
+      - main          # auto-deploy on every push to main
+  workflow_dispatch:  # allow manual trigger from GitHub UI
+
+jobs:
+  deploy:
+    name: Deploy NewsCollectorAgent
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      # ── 1. Configure SSH ──────────────────────────────────────────────────
+      - name: Set up SSH key
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.SERVER_SSH }}" > ~/.ssh/id_rsa
+          chmod 600 ~/.ssh/id_rsa
+          ssh-keyscan -H "${{ secrets.SERVER_IP }}" >> ~/.ssh/known_hosts 2>/dev/null
+
+      # ── 2. Deploy on VM ───────────────────────────────────────────────────
+      - name: Deploy on VM
+        run: |
+          ssh -i ~/.ssh/id_rsa \
+              -o StrictHostKeyChecking=no \
+              -o ConnectTimeout=30 \
+              "${{ secrets.SERVER_USER }}@${{ secrets.SERVER_IP }}" \
+              'bash -s' << 'ENDSSH'
+
+            set -euo pipefail
+            APP_DIR="/opt/news-collector"
+
+            echo "──────────────────────────────────────────"
+            echo "  NewsCollectorAgent — starting deployment"
+            echo "──────────────────────────────────────────"
+
+            # ── Clone repo on first deploy, pull on subsequent runs ────────
+            if [ ! -d "$APP_DIR/.git" ]; then
+              echo "[1/4] First deploy — cloning repository"
+              sudo git clone https://github.com/Deepjyoti7147/NewsCollectorAgent.git "$APP_DIR"
+              sudo chown -R "$USER:$USER" "$APP_DIR"
+            else
+              echo "[1/4] Pulling latest code"
+              git -C "$APP_DIR" fetch origin main
+              git -C "$APP_DIR" reset --hard origin/main
+            fi
+
+            # ── Verify .env exists (must be placed manually the first time) ─
+            echo "[2/4] Checking .env"
+            if [ ! -f "$APP_DIR/.env" ]; then
+              echo "ERROR: $APP_DIR/.env not found."
+              echo "       Copy .env.example to $APP_DIR/.env and fill in DB credentials."
+              exit 1
+            fi
+
+            # ── Rebuild Docker image and restart ──────────────────────────
+            echo "[3/4] Building Docker image"
+            cd "$APP_DIR"
+            docker compose build --no-cache
+
+            echo "[4/4] Restarting service"
+            docker compose down --remove-orphans || true
+            docker compose up -d
+
+            # ── Health check ──────────────────────────────────────────────
+            echo "Waiting 10s for container to start..."
+            sleep 10
+            if docker compose ps | grep -q "Up"; then
+              echo "✅ Container is running"
+              docker compose logs --tail=30
+            else
+              echo "❌ Container failed to start — last logs:"
+              docker compose logs --tail=50
+              exit 1
+            fi
+
+            echo "──────────────────────────────────────────"
+            echo "  Deployment complete ✅"
+            echo "──────────────────────────────────────────"
+          ENDSSH
+
+      # ── 3. Cleanup local SSH key ──────────────────────────────────────────
+      - name: Clean up SSH key
+        if: always()
+        run: rm -f ~/.ssh/id_rsa
