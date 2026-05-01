@@ -1,0 +1,43 @@
+# systemd unit file for NewsCollectorAgent
+# Install: sudo cp news-collector.service /etc/systemd/system/
+#          sudo systemctl daemon-reload
+#          sudo systemctl enable --now news-collector
+
+[Unit]
+Description=Indian Stock Market News Collector Agent
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=newscollector
+Group=newscollector
+
+WorkingDirectory=/opt/news-collector
+EnvironmentFile=/opt/news-collector/.env
+ExecStart=/opt/news-collector/.venv/bin/python -u main.py
+
+# Restart policy
+Restart=on-failure
+RestartSec=30
+StartLimitIntervalSec=300
+StartLimitBurst=5
+
+# Memory/CPU limits (cgroup v2)
+MemoryMax=512M
+MemorySwapMax=1G
+CPUQuota=90%
+
+# Security hardening
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ReadWritePaths=/opt/news-collector
+
+# Logging
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=news-collector
+
+[Install]
+WantedBy=multi-user.target

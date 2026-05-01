@@ -1,0 +1,33 @@
+version: "3.9"
+
+services:
+  news-collector:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: news-collector:latest
+    restart: unless-stopped
+    env_file: .env
+
+    # ── Resource limits (1 vCPU / 1 GB RAM + swap) ───────────────────────────
+    deploy:
+      resources:
+        limits:
+          cpus: "0.9"        # leave 0.1 for OS
+          memory: "512M"     # generous headroom; process uses ~80-120 MB
+        reservations:
+          memory: "128M"
+
+    # Health monitoring
+    healthcheck:
+      test: ["CMD", "python", "-c", "import psycopg2"]
+      interval: 60s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "20m"
+        max-file: "3"
