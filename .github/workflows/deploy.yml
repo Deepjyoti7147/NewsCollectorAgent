@@ -21,7 +21,30 @@ jobs:
           chmod 600 ~/.ssh/id_rsa
           ssh-keyscan -H "${{ secrets.SERVER_IP }}" >> ~/.ssh/known_hosts 2>/dev/null
 
-      # ── 2. Deploy on VM ───────────────────────────────────────────────────
+      # ── 2. Write .env from secrets then deploy ────────────────────────────
+      - name: Write .env to VM
+        run: |
+          ssh -i ~/.ssh/id_rsa \
+              -o StrictHostKeyChecking=no \
+              -o ConnectTimeout=30 \
+              "${{ secrets.SERVER_USER }}@${{ secrets.SERVER_IP }}" \
+              "sudo mkdir -p /opt/news-collector && \
+               sudo chown \$USER:\$USER /opt/news-collector && \
+               cat > /opt/news-collector/.env" << 'EOF'
+          POSTGRES_HOST=${{ secrets.POSTGRES_HOST }}
+          POSTGRES_PORT=5432
+          POSTGRES_DB=${{ secrets.POSTGRES_DB }}
+          POSTGRES_USER=${{ secrets.POSTGRES_USER }}
+          POSTGRES_PASSWORD=${{ secrets.POSTGRES_PASSWORD }}
+          POSTGRES_SSLMODE=disable
+          COLLECT_INTERVAL_MINUTES=15
+          REQUEST_DELAY_SECONDS=1.5
+          RETENTION_DAYS=90
+          RUN_ONCE=false
+          LOG_LEVEL=INFO
+          EOF
+
+      # ── 3. Deploy on VM ───────────────────────────────────────────────────
       - name: Deploy on VM
         run: |
           ssh -i ~/.ssh/id_rsa \
@@ -48,11 +71,10 @@ jobs:
               git -C "$APP_DIR" reset --hard origin/main
             fi
 
-            # ── Verify .env exists (must be placed manually the first time) ─
-            echo "[2/4] Checking .env"
+            # ── Verify .env (was written in previous step) ─────────────────
+            echo "[2/4] Verifying .env"
             if [ ! -f "$APP_DIR/.env" ]; then
-              echo "ERROR: $APP_DIR/.env not found."
-              echo "       Copy .env.example to $APP_DIR/.env and fill in DB credentials."
+              echo "ERROR: .env missing — secrets step may have failed."
               exit 1
             fi
 
@@ -82,7 +104,7 @@ jobs:
             echo "──────────────────────────────────────────"
           ENDSSH
 
-      # ── 3. Cleanup local SSH key ──────────────────────────────────────────
+      # ── 4. Cleanup local SSH key ──────────────────────────────────────────
       - name: Clean up SSH key
         if: always()
         run: rm -f ~/.ssh/id_rsa
