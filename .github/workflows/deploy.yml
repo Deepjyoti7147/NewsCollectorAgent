@@ -44,7 +44,7 @@ jobs:
           POSTGRES_SSLMODE=disable
           COLLECT_INTERVAL_MINUTES=15
           REQUEST_DELAY_SECONDS=1.5
-          RETENTION_DAYS=90
+          RETENTION_DAYS=365
           RUN_ONCE=false
           LOG_LEVEL=INFO
           EOF

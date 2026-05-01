@@ -91,7 +91,7 @@ def collect_news() -> None:
 
 def cleanup_old_data() -> None:
     """Weekly maintenance: delete articles older than retention_days."""
-    retention = int(os.environ.get("RETENTION_DAYS", "90"))
+    retention = int(os.environ.get("RETENTION_DAYS", "365"))
     try:
         deleted = _db.cleanup_old_articles(retention_days=retention)
         logger.info("Cleanup: removed %d articles older than %d days", deleted, retention)
