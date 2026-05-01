@@ -73,9 +73,14 @@ jobs:
 
             # ── Clone repo on first deploy, pull on subsequent runs ────────
             if [ ! -d "$APP_DIR/.git" ]; then
-              echo "[1/4] First deploy — cloning repository"
-              sudo git clone https://github.com/Deepjyoti7147/NewsCollectorAgent.git "$APP_DIR"
+              echo "[1/4] First deploy — initializing repository"
+              sudo mkdir -p "$APP_DIR"
               sudo chown -R "$USER:$USER" "$APP_DIR"
+              cd "$APP_DIR"
+              git init
+              git remote add origin https://github.com/Deepjyoti7147/NewsCollectorAgent.git
+              git fetch origin main
+              git reset --hard origin/main
             else
               echo "[1/4] Pulling latest code"
               git -C "$APP_DIR" fetch origin main
