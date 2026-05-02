@@ -47,6 +47,9 @@ jobs:
           RETENTION_DAYS=365
           RUN_ONCE=false
           LOG_LEVEL=INFO
+          API_PORT=5000
+          API_HOST=0.0.0.0
+          YF_FETCH_DELAY_SECONDS=120
           EOF
 
       # ── 3. Deploy on VM ───────────────────────────────────────────────────

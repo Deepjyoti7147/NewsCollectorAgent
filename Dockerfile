@@ -11,8 +11,10 @@ RUN pip install --no-cache-dir --prefix=/install -r requirements.txt
 # ── Runtime stage ─────────────────────────────────────────────────────────────
 FROM python:3.12-slim
 
-# Create non-root user
-RUN useradd -r -s /sbin/nologin -d /app newscollector
+# Create non-root user and install curl for healthchecks
+RUN apt-get update && apt-get install -y --no-install-recommends curl \
+    && rm -rf /var/lib/apt/lists/* \
+    && useradd -r -s /sbin/nologin -d /app newscollector
 
 WORKDIR /app
 
@@ -25,14 +27,15 @@ COPY --chown=newscollector:newscollector main.py .
 
 USER newscollector
 
-# Healthcheck: verify the process is alive
+# Healthcheck: verify the API is responsive
 HEALTHCHECK --interval=60s --timeout=10s --start-period=30s --retries=3 \
-    CMD python -c "import psycopg2" || exit 1
+    CMD curl -f http://localhost:${API_PORT:-5000}/health || exit 1
 
 # Memory-conscious defaults
 ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
     PYTHONMALLOC=malloc \
-    LOG_LEVEL=INFO
+    LOG_LEVEL=INFO \
+    API_PORT=5000
 
 ENTRYPOINT ["python", "-u", "main.py"]
