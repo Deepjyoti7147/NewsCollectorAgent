@@ -16,3 +16,7 @@ APScheduler==3.10.4
 
 # Environment config
 python-dotenv==1.0.1
+
+# API & Watchlist
+yfinance==0.2.54
+Flask==3.0.3

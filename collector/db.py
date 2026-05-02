@@ -20,6 +20,33 @@ logger = logging.getLogger("news_collector.db")
 # ── DDL ─────────────────────────────────────────────────────────────────────
 
 SCHEMA_SQL = """
+CREATE TABLE IF NOT EXISTS watchlist (
+    id              SERIAL PRIMARY KEY,
+    symbol          TEXT UNIQUE NOT NULL,
+    added_at        TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS yf_news (
+    id              BIGSERIAL PRIMARY KEY,
+    symbol          TEXT NOT NULL,
+    news_id         TEXT NOT NULL,
+    content_type    TEXT,
+    title           TEXT NOT NULL,
+    summary         TEXT,
+    pub_date        TIMESTAMPTZ,
+    provider_name   TEXT,
+    provider_url    TEXT,
+    article_url     TEXT,
+    thumbnail_url   TEXT,
+    fetched_at      TIMESTAMPTZ DEFAULT NOW(),
+
+    CONSTRAINT yf_news_id_uq UNIQUE (news_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_yf_news_symbol ON yf_news (symbol);
+CREATE INDEX IF NOT EXISTS idx_yf_news_pub_date ON yf_news (pub_date DESC);
+CREATE INDEX IF NOT EXISTS idx_yf_news_fetched_at ON yf_news (fetched_at DESC);
+
 CREATE TABLE IF NOT EXISTS news_articles (
     id              BIGSERIAL PRIMARY KEY,
     title           TEXT        NOT NULL,
@@ -181,6 +208,82 @@ class DBHandler:
                     """,
                     (feeds_fetched, articles_new, articles_skipped, status, error_message, run_id),
                 )
+
+    # ── Watchlist management ───────────────────────────────────────────────────
+
+    def get_watchlist(self) -> list[dict]:
+        with self._get_conn() as conn:
+            with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+                cur.execute("SELECT symbol FROM watchlist ORDER BY symbol")
+                return cur.fetchall()
+
+    def add_to_watchlist(self, symbol: str) -> bool:
+        symbol = symbol.upper().strip()
+        try:
+            with self._get_conn() as conn:
+                with conn.cursor() as cur:
+                    cur.execute(
+                        "INSERT INTO watchlist (symbol) VALUES (%s) ON CONFLICT DO NOTHING",
+                        (symbol,),
+                    )
+                    return cur.rowcount > 0
+        except Exception as exc:
+            logger.error("Failed to add %s to watchlist: %s", symbol, exc)
+            return False
+
+    def remove_from_watchlist(self, symbol: str) -> bool:
+        symbol = symbol.upper().strip()
+        try:
+            with self._get_conn() as conn:
+                with conn.cursor() as cur:
+                    cur.execute("DELETE FROM watchlist WHERE symbol = %s", (symbol,))
+                    return cur.rowcount > 0
+        except Exception as exc:
+            logger.error("Failed to remove %s from watchlist: %s", symbol, exc)
+            return False
+
+    # ── yfinance news persistence ──────────────────────────────────────────────
+
+    def save_yf_news(self, symbol: str, news_items: list[dict]) -> tuple[int, int]:
+        """
+        Deduplicate and save news from yfinance.
+        Uses a helper to parse items before insertion.
+        """
+        from collector.watchlist import WatchlistCollector
+        
+        if not news_items:
+            return 0, 0
+
+        inserted = skipped = 0
+        with self._get_conn() as conn:
+            with conn.cursor() as cur:
+                for item in news_items:
+                    parsed = WatchlistCollector.parse_article(symbol, item)
+                    if not parsed:
+                        skipped += 1
+                        continue
+
+                    try:
+                        cur.execute(
+                            """
+                            INSERT INTO yf_news
+                                (symbol, news_id, content_type, title, summary, pub_date,
+                                 provider_name, provider_url, article_url, thumbnail_url)
+                            VALUES
+                                (%(symbol)s, %(news_id)s, %(content_type)s, %(title)s, %(summary)s, %(pub_date)s,
+                                 %(provider_name)s, %(provider_url)s, %(article_url)s, %(thumbnail_url)s)
+                            ON CONFLICT (news_id) DO NOTHING
+                            """,
+                            parsed,
+                        )
+                        if cur.rowcount:
+                            inserted += 1
+                        else:
+                            skipped += 1
+                    except Exception as exc:
+                        logger.warning("Failed to insert YF news '%s': %s", parsed.get("news_id"), exc)
+                        skipped += 1
+        return inserted, skipped
 
     # ── Maintenance ───────────────────────────────────────────────────────────
 

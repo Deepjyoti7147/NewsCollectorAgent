@@ -23,6 +23,9 @@ from dotenv import load_dotenv
 
 from collector.db import DBHandler
 from collector.parser import FeedParser
+from collector.watchlist import WatchlistCollector
+from collector.api import create_app
+import threading
 
 # ── Logging setup ─────────────────────────────────────────────────────────────
 
@@ -48,6 +51,7 @@ logger = logging.getLogger("news_collector")
 
 _db: DBHandler | None = None
 _parser: FeedParser | None = None
+_watchlist_collector: WatchlistCollector | None = None
 _scheduler: BlockingScheduler | None = None
 
 
@@ -87,6 +91,16 @@ def collect_news() -> None:
                 _db.complete_run(run_id, status="FAILED", error_message=str(exc))
             except Exception:
                 pass
+
+
+def run_watchlist_collection() -> None:
+    """Trigger yfinance news collection for all symbols in watchlist."""
+    global _watchlist_collector
+    if _watchlist_collector:
+        try:
+            _watchlist_collector.run()
+        except Exception as exc:
+            logger.error("Watchlist collection job failed: %s", exc)
 
 
 def cleanup_old_data() -> None:
@@ -147,6 +161,22 @@ def main() -> None:
     # ── Initialise parser ─────────────────────────────────────────────────────
     _parser = FeedParser(request_delay=request_delay)
 
+    # ── Initialise Watchlist Collector ───────────────────────────────────────
+    yf_delay = float(os.environ.get("YF_FETCH_DELAY_SECONDS", "120.0"))
+    _watchlist_collector = WatchlistCollector(_db, fetch_delay=yf_delay)
+
+    # ── Start API Server (Background Thread) ──────────────────────────────────
+    api_port = int(os.environ.get("API_PORT", "5000"))
+    api_host = os.environ.get("API_HOST", "0.0.0.0")
+    
+    def _run_api():
+        app = create_app(_db)
+        logger.info("Starting API server on %s:%d", api_host, api_port)
+        app.run(host=api_host, port=api_port, debug=False, use_reloader=False)
+
+    api_thread = threading.Thread(target=_run_api, daemon=True)
+    api_thread.start()
+
     # ── Signal handlers ───────────────────────────────────────────────────────
     signal.signal(signal.SIGTERM, _shutdown)
     signal.signal(signal.SIGINT, _shutdown)
@@ -184,6 +214,19 @@ def main() -> None:
         max_instances=1,
         coalesce=True,
         replace_existing=True,
+    )
+
+    # Watchlist collection job (can run in parallel with RSS job as they use different tables)
+    # The collector itself handles internal per-ticker delay.
+    _scheduler.add_job(
+        run_watchlist_collection,
+        trigger=IntervalTrigger(minutes=5), # Frequency of starting a full cycle
+        id="watchlist_collection",
+        name="YFinance Watchlist Collection",
+        max_instances=1,
+        coalesce=True,
+        replace_existing=True,
+        next_run_time=datetime.now(),
     )
 
     logger.info("Scheduler started — waiting for jobs")
