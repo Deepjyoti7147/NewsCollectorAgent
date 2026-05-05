@@ -263,7 +263,10 @@ class DBHandler:
                         skipped += 1
                         continue
 
+                    # Use a SAVEPOINT per row so a single failure doesn't abort
+                    # the entire transaction (psycopg2 InFailedSqlTransaction).
                     try:
+                        cur.execute("SAVEPOINT yf_insert")
                         cur.execute(
                             """
                             INSERT INTO yf_news
@@ -276,11 +279,14 @@ class DBHandler:
                             """,
                             parsed,
                         )
+                        cur.execute("RELEASE SAVEPOINT yf_insert")
                         if cur.rowcount:
                             inserted += 1
                         else:
                             skipped += 1
                     except Exception as exc:
+                        cur.execute("ROLLBACK TO SAVEPOINT yf_insert")
+                        cur.execute("RELEASE SAVEPOINT yf_insert")
                         logger.warning("Failed to insert YF news '%s': %s", parsed.get("news_id"), exc)
                         skipped += 1
         return inserted, skipped

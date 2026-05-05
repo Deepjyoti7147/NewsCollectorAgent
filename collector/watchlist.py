@@ -87,8 +87,41 @@ class WatchlistCollector:
         """Call yfinance and return raw news items for *symbol*."""
         logger.debug("Fetching yfinance news for %s …", symbol)
         ticker = yf.Ticker(symbol)
-        news = ticker.get_news()
-        logger.debug("yfinance returned %d item(s) for %s", len(news), symbol)
+
+        # yfinance ≥ 0.2.37 requires proxy=None and count kwarg;
+        # fall back to the .news property if get_news() is unavailable.
+        try:
+            news = ticker.get_news(proxy=None, count=10)
+        except TypeError:
+            # Older yfinance — get_news() doesn't accept those kwargs
+            try:
+                news = ticker.get_news()
+            except Exception:
+                news = []
+        except Exception as exc:
+            logger.warning("get_news() raised for %s: %s — falling back to .news", symbol, exc)
+            news = []
+
+        # Last-resort fallback: use the .news property
+        if not news:
+            try:
+                news = ticker.news or []
+            except Exception as exc:
+                logger.warning(".news attribute failed for %s: %s", symbol, exc)
+                news = []
+
+        if not news:
+            logger.warning("yfinance returned 0 items for %s — ticker may be invalid or rate-limited", symbol)
+        else:
+            logger.debug("yfinance returned %d item(s) for %s", len(news), symbol)
+            # Log first item structure at DEBUG level to aid troubleshooting
+            if logger.isEnabledFor(logging.DEBUG):
+                import json as _json
+                try:
+                    logger.debug("Sample item for %s: %s", symbol, _json.dumps(news[0], default=str)[:500])
+                except Exception:
+                    pass
+
         return news
 
     @staticmethod
